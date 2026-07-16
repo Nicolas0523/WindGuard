@@ -151,14 +151,31 @@ async def process_historical_dates(message: Message, state: FSMContext) -> None:
                     f"   Affected Cells: {len(hotspot['cells'])}\n\n"
                 )
         else:
-            response_text += "✅ No critical hotspots found in this area."
+            response_text += "✅ No critical hotspots found in this area.\n\n"
 
         await message.answer(response_text)
+
+        await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
+        
+        ai_data = {
+            "risk_score": risk_score,
+            "total_cells": result.get("total_cells", 100), 
+            "hotspots_count": len(hotspots),
+            "worst_cells": result.get("worst_cells", [])
+        }
+        
+        ai_recommendations = generate_individual_response(
+            user_message="Provide recommendations based on this analysis.",
+            data=ai_data
+        )
+        
+        await message.answer(f"💡 **AI Agro-Consultant Recommendations:**\n\n{ai_recommendations}", parse_mode="Markdown")
+
+
         await state.set_state(None) 
 
     except Exception as e:
         await message.answer(f"Something went wrong: {str(e)}")
-
 
 
 @user.message(F.text == "Climate Prediction (2050)")
@@ -209,14 +226,30 @@ async def process_climate_prediction(message: Message, state: FSMContext) -> Non
                     f"   Affected Cells: {len(hotspot['cells'])}\n\n"
                 )
         else:
-            response_text += "✅ No critical hotspots found in this area."
+            response_text += "✅ No critical hotspots found in this area.\n\n"
 
         await message.answer(response_text)
+
+        await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
+        
+        ai_data = {
+            "risk_score": risk_score,
+            "total_cells": result.get("total_cells", 100),
+            "hotspots_count": len(hotspots),
+            "worst_cells": result.get("worst_cells", [])
+        }
+        
+        ai_recommendations = generate_individual_response(
+            user_message="Explain what these long-term climate predictions mean for my field and how to prepare.",
+            data=ai_data
+        )
+        
+        await message.answer(f"💡 **AI Climate Risk Mitigation advice:**\n\n{ai_recommendations}", parse_mode="Markdown")
+
         await state.set_state(None) 
 
     except Exception as e:
         await message.answer(f"Something went wrong: {str(e)}")
-
 
 
 @user.message(F.text == "10-day Forecast")
@@ -268,9 +301,27 @@ async def process_short_forecast(message: Message, state: FSMContext) -> None:
                     f"   Affected Cells: {len(hotspot['cells'])}\n\n"
                 )
         else:
-            response_text += "✅ No critical hotspots found in this area."
+            response_text += "✅ No critical hotspots found in this area.\n\n"
 
         await message.answer(response_text)
+
+        await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
+        
+        ai_data = {
+            "risk_score": risk_score,
+            "total_cells": result.get("total_cells", 100),
+            "hotspots_count": len(hotspots),
+            "worst_cells": result.get("worst_cells", [])
+        }
+        
+        ai_recommendations = generate_individual_response(
+            user_message="What are the immediate actions for the next 10 days?",
+            data=ai_data
+        )
+        
+        await message.answer(f"💡 **AI Agro-Consultant Recommendations:**\n\n{ai_recommendations}", parse_mode="Markdown")
+
+
         await state.set_state(None) 
 
     except Exception as e:
@@ -281,3 +332,27 @@ async def process_short_forecast(message: Message, state: FSMContext) -> None:
 async def send_document(message: Message) -> None:
     await message.answer("Download the document by clicking the button below.", reply_markup=kb.download_doc)
 
+
+@user.message()
+async def chat_with_assistant(message: Message, state: FSMContext) -> None:
+    current_state = await state.get_state()
+    if current_state is not None:
+        return
+
+    await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
+
+    try:
+        user_data = await state.get_data()
+        region_name = user_data.get("region", None)
+        
+        prompt = message.text
+        if region_name:
+            prompt = f"[User Region: {region_name}] {message.text}"
+
+        ai_response = generate_individual_response(user_message=prompt, data=None)
+        
+        await message.answer(ai_response, parse_mode="Markdown")
+        
+    except Exception as e:
+        print(f"Error in Gemini chat: {e}")
+        await message.answer("My system is slightly overloaded. Please rephrase your question or try again in a moment!")
