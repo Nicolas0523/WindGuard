@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove
+from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove, FSInputFile
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 
@@ -356,3 +356,30 @@ async def chat_with_assistant(message: Message, state: FSMContext) -> None:
     except Exception as e:
         print(f"Error in Gemini chat: {e}")
         await message.answer("My system is slightly overloaded. Please rephrase your question or try again in a moment!")
+
+@user.message(F.text == "Send document")
+async def send_document(message: Message, state: FSMContext) -> None:
+    try:
+        user_data = await state.get_data()
+        region_name = user_data.get("region")
+
+        if not region_name:
+            await message.answer("Please select a region first using 'Choose Region' button.")
+            return
+
+        pdf_path = f"reports/report_{region_name.replace(' ', '_')}.pdf" 
+
+        await message.answer("Preparing your PDF report... ⏳")
+        await message.bot.send_chat_action(chat_id=message.chat.id, action="upload_document")
+
+        document = FSInputFile(path=pdf_path, filename=f"WindGuard_Report_{region_name}.pdf")
+
+        await message.answer_document(
+            document=document,
+            caption=f"📋 Here is your detailed WindGuard report for {region_name}."
+        )
+
+    except FileNotFoundError:
+        await message.answer("Sorry, the report for this region hasn't been generated yet. Please run the forecast first.")
+    except Exception as e:
+        await message.answer(f"Failed to send document: {str(e)}")
