@@ -1,0 +1,455 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+:root {
+  --primary: #3b82f6;
+  --primary-hover: #2563eb;
+  --bg-glass: rgba(10, 15, 30, 0.75); /* Чуть плотнее стекло для лучшей читаемости */
+  --border-glass: rgba(255, 255, 255, 0.06);
+  --text-main: #f1f5f9;
+  --text-muted: #64748b;
+  --radius: 10px; /* Более строгие и компактные углы */
+  
+  --risk-low: #10b981;
+  --risk-medium: #f59e0b;
+  --risk-high: #ef4444;
+}
+
+/* Базовые стили */
+body, html, #root, .app {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  background-color: #030712;
+  color: var(--text-main);
+  font-family: 'Inter', sans-serif;
+  overflow: hidden;
+}
+
+/* Сетка дашборда */
+.dashboard {
+  position: relative;
+  display: flex;
+  height: calc(100vh - 50px); /* Уменьшили высоту навбара */
+  width: 100vw;
+}
+
+/* Общий класс стеклянных панелей */
+.glass-panel {
+  background: var(--bg-glass);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  color: var(--text-main);
+}
+
+/* ==================== СЕТКА И ПОЗИЦИОНИРОВАНИЕ ПАНЕЛЕЙ ==================== */
+
+/* ЛЕВАЯ КОЛОНКА (ИИ-Ассистент опущен вниз) */
+.left-panel {
+  position: absolute;
+  bottom: 16px; /* Прижали к нижнему краю */
+  left: 16px;
+  width: 290px; /* Сузили панель ИИ для аккуратности */
+  z-index: 1000;
+}
+
+/* ПРАВАЯ КОЛОНКА (Настройки, Карточки, Легенда) */
+.right-panel {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 290px; /* Сузили правую панель до 290px */
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+  z-index: 1000;
+}
+
+.right-panel::-webkit-scrollbar {
+  width: 0px;
+}
+
+/* ==================== КОМПОНЕНТ: CONTROL PANEL ==================== */
+.control-panel {
+  position: relative;
+  width: 100%; 
+  padding: 14px; /* Уменьшили внутренние отступы */
+  box-sizing: border-box;
+}
+
+.panel-title {
+  font-size: 13px; /* Уменьшили шрифт */
+  font-weight: 700;
+  letter-spacing: -0.2px;
+  margin: 0 0 10px 0;
+  background: linear-gradient(to right, #ffffff, #cbd5e1);
+  background-clip: text; /* Стандартное свойство для совместимости */
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.panel-sub-title {
+  font-size: 9px;
+  font-weight: 600;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: 8px;
+}
+
+/* Поля ввода (Компактный стиль) */
+.input-group {
+  margin-bottom: 10px;
+}
+
+.input-group label {
+  display: block;
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: 3px;
+  letter-spacing: 0.5px;
+}
+
+.custom-input {
+  width: 100%;
+  padding: 6px 10px; /* Сделали поля ввода тоньше */
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(15, 23, 42, 0.6);
+  font-size: 11px;
+  color: var(--text-main);
+  outline: none;
+  box-sizing: border-box;
+}
+
+.custom-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+
+.btn-analyze {
+  width: 100%;
+  padding: 8px; /* Уменьшили высоту кнопки */
+  border-radius: 6px;
+  border: none;
+  background: var(--primary);
+  color: white;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-top: 4px;
+}
+
+.btn-analyze:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+
+.btn-analyze:disabled {
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.2);
+  cursor: not-allowed;
+}
+
+/* ==================== КОМПОНЕНТ: RISK CARD ==================== */
+.risk-card {
+  padding: 12px;
+}
+
+.risk-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.risk-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+
+.risk-badge.low { background: rgba(16, 185, 129, 0.12); color: var(--risk-low); }
+.risk-badge.medium { background: rgba(245, 158, 11, 0.12); color: var(--risk-medium); }
+.risk-badge.high { background: rgba(239, 68, 68, 0.12); color: var(--risk-high); }
+
+.risk-percentage {
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.risk-progress-bar {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+.risk-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+}
+
+.risk-progress-fill.low { background: var(--risk-low); }
+.risk-progress-fill.medium { background: var(--risk-medium); }
+.risk-progress-fill.high { background: var(--risk-high); }
+
+/* ==================== КОМПОНЕНТ: AI ASSISTANT (СУЖЕННЫЙ И КОМПАКТНЫЙ) ==================== */
+.assistant-panel {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.assistant-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.assistant-avatar {
+  font-size: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.assistant-header h4 {
+  font-size: 11px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.assistant-header p {
+  font-size: 9px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.assistant-body {
+  height: 130px; /* Компактная высота чата */
+  max-height: 130px;
+  overflow-y: auto;
+  background: rgba(15, 23, 42, 0.35);
+  border-radius: 6px;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.assistant-body::-webkit-scrollbar {
+  width: 3px;
+}
+
+.assistant-bubble {
+  font-size: 10px;
+  line-height: 1.4;
+  color: #cbd5e1;
+}
+
+.assistant-input-row {
+  display: flex;
+  gap: 6px;
+}
+
+.assistant-textarea {
+  flex: 1;
+  height: 30px;
+  min-height: 30px;
+  max-height: 50px;
+  padding: 6px 8px;
+  font-size: 10.5px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  color: white;
+  resize: none;
+  outline: none;
+}
+
+.btn-send {
+  background: var(--primary);
+  color: white;
+  border: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.btn-send:disabled {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted);
+}
+
+/* ==================== КОМПОНЕНТ: NAVBAR (ШАПКА) ==================== */
+.navbar {
+  height: 50px; /* Уменьшили высоту шапки */
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  box-sizing: border-box;
+  z-index: 1010;
+  border-bottom: 1px solid var(--border-glass);
+}
+
+.glass-navbar {
+  background: rgba(10, 15, 30, 0.85);
+  backdrop-filter: blur(16px);
+}
+
+.brand-name {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.brand-badge {
+  font-size: 8px;
+  padding: 1px 4px;
+}
+
+.status-indicator {
+  padding: 3px 8px;
+}
+
+.status-text {
+  font-size: 9px;
+}
+
+/* ==================== КОМПОНЕНТ: ЛЕГЕНДА КАРТЫ ==================== */
+.map-legend {
+  position: relative;
+  width: 100%;
+  padding: 10px 12px;
+  box-sizing: border-box;
+}
+
+.legend-title {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #94a3b8;
+  margin: 0 0 6px 0;
+}
+
+.legend-scale {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 500;
+  color: #e2e8f0;
+}
+
+.color-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  box-shadow: 0 0 4px currentColor;
+}
+
+/* ==================== ТЕМНАЯ СТИЛИЗАЦИЯ ИНСТРУМЕНТОВ РИСОВАНИЯ (LEAFLET DRAW) ==================== */
+
+/* Контейнер панели инструментов */
+.leaflet-bar {
+  border: 1px solid var(--border-glass) !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5) !important;
+  border-radius: 6px !important;
+  overflow: hidden;
+}
+
+/* Сами кнопки (нажатие, наведение, фон) */
+.leaflet-bar a, 
+.leaflet-bar a:hover {
+  background-color: rgba(10, 15, 30, 0.85) !important; /* Наше полупрозрачное темное стекло */
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: var(--text-main) !important; /* Белый цвет для иконок/текста */
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+  transition: all 0.2s ease;
+}
+
+/* Убираем нижнюю границу у последней кнопки в группе */
+.leaflet-bar a:last-child {
+  border-bottom: none !important;
+}
+
+/* Эффект при наведении на кнопки */
+.leaflet-bar a:hover {
+  background-color: var(--primary) !important; /* Синий цвет при наведении */
+  color: #ffffff !important;
+}
+
+/* Состояние, когда кнопка активна (выбрана) */
+.leaflet-draw-toolbar .leaflet-draw-draw-polygon.leaflet-draw-toolbar-button-enabled {
+  background-color: var(--primary-hover) !important;
+}
+
+/* Стилизация всплывающих подсказок Leaflet Draw (tooltip), если они появляются */
+.leaflet-draw-tooltip {
+  background: rgba(10, 15, 30, 0.9) !important;
+  border: 1px solid var(--border-glass) !important;
+  color: var(--text-main) !important;
+  border-radius: 4px !important;
+  font-family: 'Inter', sans-serif !important;
+  font-size: 10px !important;
+}
+
+.leaflet-draw-tooltip-before {
+  border-right-color: rgba(10, 15, 30, 0.9) !important;
+}
+
+.btn-export-pdf {
+  width: 100%;
+  padding: 8px;
+  margin-top: 10px; /* Отступ от списка хотспотов */
+  border-radius: 6px;
+  border: 1px solid rgba(16, 185, 129, 0.3); /* Цвет границы под Emerald */
+  background: rgba(16, 185, 129, 0.1); /* Полупрозрачный зеленый фон */
+  color: #10b981; /* Цвет текста в тон риска "Low" */
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.btn-export-pdf:hover:not(:disabled) {
+  background: #10b981;
+  color: #ffffff;
+}
+
+.btn-export-pdf:disabled {
+  border-color: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
