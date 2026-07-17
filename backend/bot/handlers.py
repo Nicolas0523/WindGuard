@@ -10,7 +10,7 @@ from .states import Reg, Forecast
 from .regions import REGIONS
 from .api import analyze_region, analyze_climate, analyze_short
 from assistant import generate_individual_response
-import keyboard as kb  
+from . import keyboard as kb  
 
 user = Router()
 
