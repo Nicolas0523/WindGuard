@@ -11,7 +11,7 @@ def analyze_region(polygon, start_date, end_date):
     }
 
     response = requests.post(
-        "http://127.0.0.1:8000/analyze",
+        "https://windguard-1.onrender.com/analyze",
         json=payload
     )
 
@@ -28,7 +28,7 @@ def analyze_climate(polygon, start_date, end_date):
     }
 
     response = requests.post(
-        "http://127.0.0.1:8000/analyze/climate",
+        "https://windguard-1.onrender.com/analyze/climate",
         json=payload
     )
 
@@ -45,7 +45,7 @@ def analyze_short(polygon, start_date, end_date):
     }
 
     response = requests.post(
-        "http://127.0.0.1:8000/analyze/short",
+        "https://windguard-1.onrender.com/analyze/short",
         json=payload
     )
 
