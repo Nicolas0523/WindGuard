@@ -1,9 +1,12 @@
 import os
 import ee
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta
+
+from aiogram.types import Update
+from bot.bot_instance import bot, dp
 
 from schemas import AnalysisRequest, ChatRequest
 from assistant import generate_individual_response
@@ -32,6 +35,19 @@ app.add_middleware(
 
 climate_cache = {}
 RESOLUTION_KM = 10
+
+@app.post("/telegram/webhook")
+async def telegram_webhook(request: Request):
+    data = await request.json()
+    update = Update.model_validate(data, context={"bot": bot})
+    await dp.feed_update(bot=bot, update=update)
+    return {"ok": True}
+
+@app.on_event("startup")
+async def set_bot_webhook():
+    render_url = "https://твой-сервис.onrender.com"  
+    await bot.set_webhook(url=f"{render_url}/telegram/webhook")
+
 
 @app.post("/analyze")
 def analyze(data: AnalysisRequest):
