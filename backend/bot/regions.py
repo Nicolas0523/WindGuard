@@ -1,4 +1,4 @@
-from regions_coords import abay, aqmola, aqtobe, almaty_region, atyrau, east_kazakhstan, jambyl, jetisu, west_kazakhstan, karagandy, kostanay, kyzylorda, mangystau, pavlodar, north_kazakhstan, turkestan, ulytau
+from .regions_coords import abay, aqmola, aqtobe, almaty_region, atyrau, east_kazakhstan, jambyl, jetisu, west_kazakhstan, karagandy, kostanay, kyzylorda, mangystau, pavlodar, north_kazakhstan, turkestan, ulytau
 
 REGIONS = {
     "Abay Region": {
