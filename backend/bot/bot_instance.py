@@ -6,9 +6,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from .config import settings
 from .handlers import user
 
-bot = Bot(
-    token=settings().bot_token,
-    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-)
-dp = Dispatcher(storage=MemoryStorage())
+
+BOT_TOKEN = os.getenv("BOT_TOKEN") 
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
 dp.include_router(user)

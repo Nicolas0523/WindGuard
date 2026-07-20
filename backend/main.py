@@ -3,6 +3,7 @@ import ee
 import gc
 import uuid
 import asyncio
+import logging
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -28,18 +29,21 @@ except Exception:
     ee.Authenticate()
     ee.Initialize()
 
-process_pool = ProcessPoolExecutor(max_workers=1)
-
 tasks_db = {}
 climate_cache = {}
 
+logging.basicConfig(level=logging.INFO)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    render_url = os.getenv("RENDER_EXTERNAL_URL", "https://windguard-1.onrender.com")
-    webhook_url = f"{render_url}/telegram/webhook"
+    render_url = os.getenv("RENDER_EXTERNAL_URL")
+    if render_url:
+        webhook_url = f"{render_url.rstrip('/')}/telegram/webhook"
+        logging.info(f"Setting webhook to {webhook_url}")
+        await bot.set_webhook(url=webhook_url, drop_pending_updates=True)
+    else:
+        logging.warning("RENDER_EXTERNAL_URL is not set!")
     
-    await bot.delete_webhook(drop_pending_updates=True)
-    await bot.set_webhook(url=webhook_url)
     yield
     await bot.delete_webhook()
 
@@ -54,7 +58,6 @@ app.add_middleware(
 )
 
 def get_adaptive_resolution(start_date: str, end_date: str) -> int:
-    """ Увеличивает шаг сетки для больших периодов, чтобы уместиться в 512MB RAM """
     try:
         if not start_date or not end_date:
             return 10
@@ -196,6 +199,7 @@ async def telegram_webhook(request: Request):
         await dp.feed_update(bot=bot, update=update)
         return {"ok": True}
     except Exception as e:
+        logging.error(f"Error handling Telegram update: {e}")
         return {"ok": False, "error": str(e)}
 
 @app.get("/analyze/status/{task_id}")
