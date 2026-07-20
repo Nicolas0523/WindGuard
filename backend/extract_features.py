@@ -51,31 +51,49 @@ def _compute_features(ndvi_value, wind_mean_value, wind_max_value,
 
 
 def extract_features(raw_data, polygon, month):
+    stacked = ee.Image.cat([
+        raw_data["ndvi"].rename("NDVI_now"),
+        raw_data["wind_mean"].rename("wind_mean"),
+        raw_data["wind_max"].rename("wind_max"),
+        raw_data["rain"].rename("rain"),
+        raw_data["tempC"].rename("tempC"),
+        raw_data["soil_moisture"].rename("soil_moisture"),
+        raw_data["evaporation"].rename("evaporation"),
+        raw_data["slope"].rename("slope"),
+        raw_data["soil_type"].rename("soil_type"),
+        raw_data["biome"].rename("biome"),
+    ])
 
-    def mean_val(image, band):
-        return image.reduceRegion(
-            reducer=ee.Reducer.mean(), geometry=polygon,
-            scale=1000, bestEffort=True, maxPixels=1e9
-        ).getInfo()[band]
+    combined_reducer = ee.Reducer.mean().repeat(2).combine(
+        reducer2=ee.Reducer.max(),
+        sharedInputs=False
+    )
 
-    def max_val(image, band):
-        return image.reduceRegion(
-            reducer=ee.Reducer.max(), geometry=polygon,
-            scale=1000, bestEffort=True, maxPixels=1e9
-        ).getInfo()[band]
+    stats = stacked.reduceRegion(
+        reducer=ee.Reducer.mean(), 
+        geometry=polygon,
+        scale=1000, 
+        bestEffort=True, 
+        maxPixels=1e9
+    ).getInfo()
 
-    coords    = polygon.centroid(maxError=1).coordinates().getInfo()
-    raw       = _compute_features(
-        ndvi_value        = mean_val(raw_data["ndvi"],          "NDVI_now"),
-        wind_mean_value   = mean_val(raw_data["wind_mean"],     "wind_mean"),
-        wind_max_value    = max_val(raw_data["wind_max"],       "wind_max"),
-        rain_value        = mean_val(raw_data["rain"],          "rain"),
-        tempC_value       = mean_val(raw_data["tempC"],         "tempC"),
-        moisture_value    = mean_val(raw_data["soil_moisture"], "soil_moisture"),
-        evaporation_value = mean_val(raw_data["evaporation"],   "evaporation"),
-        slope_value       = mean_val(raw_data["slope"],         "slope"),
-        soil_type_value   = mean_val(raw_data["soil_type"],     "soil_type"),
-        biome_value       = mean_val(raw_data["biome"],         "biome"),
+    wind_max_val = raw_data["wind_max"].reduceRegion(
+        reducer=ee.Reducer.max(), geometry=polygon, scale=1000, bestEffort=True
+    ).getInfo().get("wind_max", 0)
+
+    coords = polygon.centroid(maxError=1).coordinates().getInfo()
+
+    raw = _compute_features(
+        ndvi_value        = stats.get("NDVI_now", 0),
+        wind_mean_value   = stats.get("wind_mean", 0),
+        wind_max_value    = wind_max_val,
+        rain_value        = stats.get("rain", 0),
+        tempC_value       = stats.get("tempC", 0),
+        moisture_value    = stats.get("soil_moisture", 0),
+        evaporation_value = stats.get("evaporation", 0),
+        slope_value       = stats.get("slope", 0),
+        soil_type_value   = stats.get("soil_type", 0),
+        biome_value       = stats.get("biome", 0),
         month             = month,
         latitude          = coords[1],
         longitude         = coords[0],

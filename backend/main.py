@@ -1,9 +1,11 @@
 import os
 import ee
+import asyncio
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from datetime import datetime, timedelta
 
 from aiogram.types import Update
 from bot.bot_instance import bot, dp
@@ -14,6 +16,7 @@ from predictor import prediction_grid, prediction_future_grid, get_feature_impor
 from grid import calculate_hotspots  
 from gee_service import resolve_dates, gee_retry
 
+
 try:
     service_account = os.getenv("GEE_SERVICE_ACCOUNT")
     private_key     = os.getenv("GEE_PRIVATE_KEY")
@@ -23,7 +26,20 @@ except Exception:
     ee.Authenticate()
     ee.Initialize()
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    render_url = os.getenv("RENDER_EXTERNAL_URL", "https://windguard-1.onrender.com")
+    webhook_url = f"{render_url}/telegram/webhook"
+    
+    await bot.delete_webhook(drop_pending_updates=True)
+    await bot.set_webhook(url=webhook_url)
+    print(f"Webhook установлен на {webhook_url}")
+    
+    yield
+    
+    await bot.delete_webhook()
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -36,28 +52,33 @@ app.add_middleware(
 climate_cache = {}
 RESOLUTION_KM = 10
 
+@app.get("/health")
+async def health_check():
+    return {"status": "ok"}
+
 @app.post("/telegram/webhook")
 async def telegram_webhook(request: Request):
-    data = await request.json()
-    update = Update.model_validate(data, context={"bot": bot})
-    await dp.feed_update(bot=bot, update=update)
-    return {"ok": True}
-
-@app.on_event("startup")
-async def set_bot_webhook():
-    render_url = "https://windguard-1.onrender.com"
-    await bot.set_webhook(url=f"{render_url}/telegram/webhook")
-
+    try:
+        data = await request.json()
+        update = Update.model_validate(data, context={"bot": bot})
+        await dp.feed_update(bot=bot, update=update)
+        return {"ok": True}
+    except Exception as e:
+        print(f"Ошибка обработки webhook: {e}")
+        return {"ok": False, "error": str(e)}
 
 @app.post("/analyze")
-def analyze(data: AnalysisRequest):
+async def analyze(data: AnalysisRequest):
     try:
         polygon = ee.Geometry.Polygon(data.geometry.coordinates)
         
         actual_start, actual_end, is_forecast = resolve_dates(
             data.start_date, data.end_date
         )
-        grid_cells = prediction_grid(polygon, actual_start, actual_end, resolution_km=RESOLUTION_KM)
+
+        grid_cells = await asyncio.to_thread(
+            prediction_grid, polygon, actual_start, actual_end, resolution_km=RESOLUTION_KM
+        )
 
         if not grid_cells:
             return {"error": f"No data for {actual_start} → {actual_end}"}
@@ -84,7 +105,7 @@ def analyze(data: AnalysisRequest):
         return {"error": str(e)}
 
 @app.post("/analyze/short")
-def forecast_short(data: AnalysisRequest):
+async def forecast_short(data: AnalysisRequest):
     try:
         polygon = ee.Geometry.Polygon(data.geometry.coordinates)
         
@@ -95,7 +116,9 @@ def forecast_short(data: AnalysisRequest):
         forecast_from = today.strftime("%Y-%m-%d")
         forecast_to   = (today + timedelta(days=10)).strftime("%Y-%m-%d")
 
-        grid_cells = prediction_grid(polygon, actual_start, actual_end, resolution_km=RESOLUTION_KM)
+        grid_cells = await asyncio.to_thread(
+            prediction_grid, polygon, actual_start, actual_end, resolution_km=RESOLUTION_KM
+        )
 
         if not grid_cells:
             return {"error": f"No data for {actual_start} → {actual_end}"}
@@ -126,7 +149,7 @@ def forecast_short(data: AnalysisRequest):
         return {"error": str(e)}
 
 @app.post("/analyze/climate")
-def analyze_climate(data: AnalysisRequest):
+async def analyze_climate(data: AnalysisRequest):
     try:
         polygon   = ee.Geometry.Polygon(data.geometry.coordinates)
         cache_key = f"future_{str(data.geometry.coordinates)}_{data.start_date}"
@@ -139,7 +162,9 @@ def analyze_climate(data: AnalysisRequest):
         except Exception:
             month = 6  
 
-        grid_climate = prediction_future_grid(polygon, month=month, resolution_km=RESOLUTION_KM)
+        grid_climate = await asyncio.to_thread(
+            prediction_future_grid, polygon, month=month, resolution_km=RESOLUTION_KM
+        )
 
         if not grid_climate:
             return {"error": "Не удалось сгенерировать климатический прогноз для данного региона."}
@@ -174,7 +199,8 @@ def analyze_climate(data: AnalysisRequest):
 @app.post("/api/chat")
 async def chat_endpoint(req: ChatRequest):
     try:
-        ai_response = generate_individual_response(
+        ai_response = await asyncio.to_thread(
+            generate_individual_response,
             user_message=req.message,
             data=req.analysis_data
         )
