@@ -29,14 +29,14 @@ const formatToGeoJSON = (latLngs) => {
 };
 
 const pollTaskStatus = async (taskId) => {
-  const pollInterval = 3000;
+  const pollInterval = 3000; 
 
   while (true) {
     const response = await apiClient.get(`/analyze/status/${taskId}`);
     const task = response.data;
 
     if (task.status === "completed") {
-      return task.result; 
+      return task.result;
     }
 
     if (task.status === "error") {
@@ -57,9 +57,7 @@ export const api = {
     };
     
     const response = await apiClient.post("/analyze", payload);
-    const { task_id } = response.data;
-
-    return await pollTaskStatus(task_id);
+    return await pollTaskStatus(response.data.task_id);
   },
 
   forecastShort: async (polygon) => {
@@ -71,9 +69,7 @@ export const api = {
     };
     
     const response = await apiClient.post("/analyze/short", payload);
-    const { task_id } = response.data;
-
-    return await pollTaskStatus(task_id);
+    return await pollTaskStatus(response.data.task_id);
   },
 
   analyzeClimate: async (polygon, startDate) => {
@@ -85,13 +81,10 @@ export const api = {
     };
     
     const response = await apiClient.post("/analyze/climate", payload);
-    const data = response.data;
-
-    if (data.status === "completed") {
-      return data.result;
+    if (response.data.status === "completed") {
+      return response.data.result;
     }
-
-    return await pollTaskStatus(data.task_id);
+    return await pollTaskStatus(response.data.task_id);
   },
 
   askAssistant: async (question, analysisData = null) => {
@@ -108,7 +101,7 @@ export const api = {
             hotspots_count: analysisData.hotspots?.length || 0,
           }
         : null,
-  };
+    };
 
     const response = await apiClient.post("/api/chat", payload);
     return response.data;

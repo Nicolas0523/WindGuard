@@ -1,5 +1,6 @@
 import os
 import ee
+import gc
 import uuid
 import asyncio
 from concurrent.futures import ProcessPoolExecutor
@@ -27,7 +28,7 @@ except Exception:
     ee.Authenticate()
     ee.Initialize()
 
-process_pool = ProcessPoolExecutor(max_workers=2)
+process_pool = ProcessPoolExecutor(max_workers=1)
 
 tasks_db = {}
 climate_cache = {}
@@ -52,106 +53,122 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-RESOLUTION_KM = 10
-
-
-def run_heavy_prediction_sync(coordinates, start_date, end_date, resolution_km):
-    polygon = ee.Geometry.Polygon(coordinates)
-    actual_start, actual_end, is_forecast = resolve_dates(start_date, end_date)
-    
-    grid_cells = prediction_grid(polygon, actual_start, actual_end, resolution_km=resolution_km)
-    if not grid_cells:
-        return {"error": f"No data for {actual_start} → {actual_end}"}
-
-    avg_risk = sum(p["risk"] for p in grid_cells) / len(grid_cells)
-    hotspots = calculate_hotspots(grid_cells, risk_threshold=0.7, min_size=3)
-
-    return {
-        "polygon": coordinates,
-        "grid": grid_cells,
-        "risk_score": round(avg_risk, 4),
-        "hotspots": hotspots,
-        "feature_importances": get_feature_importance(),
-        "context": {
-            "risk_score": round(avg_risk, 4),
-            "start_date": actual_start,
-            "end_date": actual_end,
-            "forecast": is_forecast
-        }
-    }
-
-
-def run_short_forecast_sync(coordinates, resolution_km):
-    polygon = ee.Geometry.Polygon(coordinates)
-    
-    today        = datetime.now()
-    actual_start = today.replace(year=today.year - 1).strftime("%Y-%m-%d")
-    actual_end   = (today.replace(year=today.year - 1) + timedelta(days=30)).strftime("%Y-%m-%d")
-
-    forecast_from = today.strftime("%Y-%m-%d")
-    forecast_to   = (today + timedelta(days=10)).strftime("%Y-%m-%d")
-
-    grid_cells = prediction_grid(polygon, actual_start, actual_end, resolution_km=resolution_km)
-
-    if not grid_cells:
-        return {"error": f"No data for {actual_start} → {actual_end}"}
-
-    avg_risk = sum(p["risk"] for p in grid_cells) / len(grid_cells)
-    hotspots = calculate_hotspots(grid_cells, risk_threshold=0.7, min_size=3)
-
-    return {
-        "polygon":       coordinates,
-        "grid":          grid_cells, 
-        "risk_score":    round(avg_risk, 4),
-        "hotspots":      hotspots,
-        "forecast_type": "10-day",
-        "is_forecast":   True,
-        "note":          "Forecast based on same period last year",
-        "period":        f"{forecast_from} to {forecast_to}",
-        "feature_importances": get_feature_importance(),
-        "context": {
-            "risk_score":    round(avg_risk, 4),
-            "start_date":    actual_start,
-            "end_date":      actual_end,
-            "forecast_from": forecast_from,
-            "forecast_to":   forecast_to
-        }
-    }
-
-
-def run_climate_forecast_sync(coordinates, start_date, resolution_km):
-    polygon = ee.Geometry.Polygon(coordinates)
-
+def get_adaptive_resolution(start_date: str, end_date: str) -> int:
+    """ Увеличивает шаг сетки для больших периодов, чтобы уместиться в 512MB RAM """
     try:
-        month = int(start_date.split("-")[1])
+        if not start_date or not end_date:
+            return 10
+        s = datetime.strptime(start_date, "%Y-%m-%d")
+        e = datetime.strptime(end_date, "%Y-%m-%d")
+        years = abs((e - s).days) / 365.0
+        
+        if years > 5:
+            return 25  
+        elif years > 2:
+            return 15  
+        return 10     
     except Exception:
-        month = 6  
+        return 10
 
-    grid_climate = prediction_future_grid(polygon, month=month, resolution_km=resolution_km)
 
-    if not grid_climate:
-        return {"error": "Не удалось сгенерировать климатический прогноз для данного региона."}
+def run_heavy_prediction_sync(coordinates, start_date, end_date):
+    try:
+        resolution_km = get_adaptive_resolution(start_date, end_date)
+        polygon = ee.Geometry.Polygon(coordinates)
+        actual_start, actual_end, is_forecast = resolve_dates(start_date, end_date)
+        
+        grid_cells = prediction_grid(polygon, actual_start, actual_end, resolution_km=resolution_km)
+        if not grid_cells:
+            return {"error": f"No data for {actual_start} → {actual_end}"}
 
-    future_risk = sum(p["risk"] for p in grid_climate) / len(grid_climate)
-    hotspots = calculate_hotspots(grid_climate, risk_threshold=0.7, min_size=3)
+        avg_risk = sum(p["risk"] for p in grid_cells) / len(grid_cells)
+        hotspots = calculate_hotspots(grid_cells, risk_threshold=0.7, min_size=3)
 
-    return {
-        "polygon":     coordinates,
-        "grid":        grid_climate,
-        "risk_score":  round(future_risk, 4),
-        "hotspots":    hotspots,
-        "scenario":    "SSP5-8.5",
-        "period":      "2040-2050",
-        "is_forecast": True,
-        "feature_importances": get_feature_importance(),
-        "context": {
-            "risk_score": round(future_risk, 4),
-            "scenario":   "SSP5-8.5 (worst case)",
-            "period":     "2050",
-            "hotspots_found": len(hotspots)
+        return {
+            "polygon": coordinates,
+            "grid": grid_cells,
+            "risk_score": round(avg_risk, 4),
+            "hotspots": hotspots,
+            "feature_importances": get_feature_importance(),
+            "context": {
+                "risk_score": round(avg_risk, 4),
+                "start_date": actual_start,
+                "end_date": actual_end,
+                "forecast": is_forecast
+            }
         }
-    }
+    finally:
+        gc.collect()
 
+
+def run_short_forecast_sync(coordinates):
+    try:
+        polygon = ee.Geometry.Polygon(coordinates)
+        today = datetime.now()
+        actual_start = today.replace(year=today.year - 1).strftime("%Y-%m-%d")
+        actual_end   = (today.replace(year=today.year - 1) + timedelta(days=30)).strftime("%Y-%m-%d")
+
+        forecast_from = today.strftime("%Y-%m-%d")
+        forecast_to   = (today + timedelta(days=10)).strftime("%Y-%m-%d")
+
+        grid_cells = prediction_grid(polygon, actual_start, actual_end, resolution_km=10)
+        if not grid_cells:
+            return {"error": f"No data for {actual_start} → {actual_end}"}
+
+        avg_risk = sum(p["risk"] for p in grid_cells) / len(grid_cells)
+        hotspots = calculate_hotspots(grid_cells, risk_threshold=0.7, min_size=3)
+
+        return {
+            "polygon": coordinates,
+            "grid": grid_cells, 
+            "risk_score": round(avg_risk, 4),
+            "hotspots": hotspots,
+            "forecast_type": "10-day",
+            "is_forecast": True,
+            "period": f"{forecast_from} to {forecast_to}",
+            "feature_importances": get_feature_importance(),
+            "context": {
+                "risk_score": round(avg_risk, 4),
+                "start_date": actual_start,
+                "end_date": actual_end,
+            }
+        }
+    finally:
+        gc.collect()
+
+
+def run_climate_forecast_sync(coordinates, start_date):
+    try:
+        polygon = ee.Geometry.Polygon(coordinates)
+        try:
+            month = int(start_date.split("-")[1])
+        except Exception:
+            month = 6  
+
+        grid_climate = prediction_future_grid(polygon, month=month, resolution_km=15)
+        if not grid_climate:
+            return {"error": "Не удалось сгенерировать климатический прогноз."}
+
+        future_risk = sum(p["risk"] for p in grid_climate) / len(grid_climate)
+        hotspots = calculate_hotspots(grid_climate, risk_threshold=0.7, min_size=3)
+
+        return {
+            "polygon": coordinates,
+            "grid": grid_climate,
+            "risk_score": round(future_risk, 4),
+            "hotspots": hotspots,
+            "scenario": "SSP5-8.5",
+            "period": "2040-2050",
+            "is_forecast": True,
+            "feature_importances": get_feature_importance(),
+            "context": {
+                "risk_score": round(future_risk, 4),
+                "scenario": "SSP5-8.5",
+                "period": "2050",
+            }
+        }
+    finally:
+        gc.collect()
 
 
 async def async_task_runner(task_id: str, func, *args):
@@ -159,7 +176,7 @@ async def async_task_runner(task_id: str, func, *args):
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(process_pool, func, *args)
         
-        if "error" in result:
+        if isinstance(result, dict) and "error" in result:
             tasks_db[task_id] = {"status": "error", "error": result["error"]}
         else:
             tasks_db[task_id] = {"status": "completed", "result": result}
@@ -191,20 +208,20 @@ async def check_task_status(task_id: str):
 @app.post("/analyze")
 async def analyze_start(data: AnalysisRequest, background_tasks: BackgroundTasks):
     task_id = str(uuid.uuid4())
-    tasks_db[task_id] = {"status": "processing", "created_at": datetime.now().isoformat()}
+    tasks_db[task_id] = {"status": "processing"}
     background_tasks.add_task(
         async_task_runner, task_id, run_heavy_prediction_sync, 
-        data.geometry.coordinates, data.start_date, data.end_date, RESOLUTION_KM
+        data.geometry.coordinates, data.start_date, data.end_date
     )
     return {"task_id": task_id, "status": "processing"}
 
 @app.post("/analyze/short")
 async def forecast_short_start(data: AnalysisRequest, background_tasks: BackgroundTasks):
     task_id = str(uuid.uuid4())
-    tasks_db[task_id] = {"status": "processing", "created_at": datetime.now().isoformat()}
+    tasks_db[task_id] = {"status": "processing"}
     background_tasks.add_task(
         async_task_runner, task_id, run_short_forecast_sync, 
-        data.geometry.coordinates, RESOLUTION_KM
+        data.geometry.coordinates
     )
     return {"task_id": task_id, "status": "processing"}
 
@@ -215,10 +232,10 @@ async def analyze_climate_start(data: AnalysisRequest, background_tasks: Backgro
         return {"status": "completed", "result": climate_cache[cache_key]}
 
     task_id = str(uuid.uuid4())
-    tasks_db[task_id] = {"status": "processing", "created_at": datetime.now().isoformat()}
+    tasks_db[task_id] = {"status": "processing"}
     background_tasks.add_task(
         async_task_runner, task_id, run_climate_forecast_sync, 
-        data.geometry.coordinates, data.start_date, RESOLUTION_KM
+        data.geometry.coordinates, data.start_date
     )
     return {"task_id": task_id, "status": "processing"}
 
