@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api } from "../services/api"; // Импортируем наш новый единый объект api
+import { api } from "../services/api";
 
 export function useAssistant(context) {
   const [answer, setAnswer] = useState("Draw an area and generate an analysis. Then, you can ask WindGuard AI questions about the soil conditions of this territory.");
@@ -14,12 +14,10 @@ export function useAssistant(context) {
     setAnswer("Thinking...");
 
     try {
-      // Используем метод askAssistant из нашего нового api.js
-      // Передаем вопрос и контекст (который пришел из Dashboard)
       const data = await api.askAssistant(question, context || {});
       
-      if (data && data.answer) {
-        setAnswer(data.answer);
+      if (data && data.response) {
+        setAnswer(data.response);
       } else if (data && data.error) {
         setAnswer(`Error: ${data.error}`);
       } else {
