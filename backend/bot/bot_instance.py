@@ -9,6 +9,6 @@ from .handlers import user
 
 
 BOT_TOKEN = os.getenv("BOT_TOKEN") 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
+dp = Dispatcher(storage=MemoryStorage())
 dp.include_router(user)

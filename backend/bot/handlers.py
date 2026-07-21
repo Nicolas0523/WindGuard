@@ -327,11 +327,6 @@ async def process_short_forecast(message: Message, state: FSMContext) -> None:
         await message.answer(f"Something went wrong: {str(e)}")
 
 
-@user.message(F.text == "Send document")
-async def send_document(message: Message) -> None:
-    await message.answer("Download the document by clicking the button below.", reply_markup=kb.download_doc)
-
-
 @user.message()
 async def chat_with_assistant(message: Message, state: FSMContext) -> None:
     current_state = await state.get_state()
