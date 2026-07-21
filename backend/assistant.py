@@ -1,25 +1,19 @@
 import os
 import time
+from typing import Any, Dict, List, Optional
+from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-from google.genai.errors import APIError 
-from typing import Optional, List, Dict, Any
-# Импортируем dotenv для автоматической локальной загрузки ключей из файла .env
-from dotenv import load_dotenv
+from google.genai.errors import APIError
 
-# Загружаем переменные окружения из .env файла
 load_dotenv()
 
-# Извлекаем ключ
 ai_key = os.getenv("GEMINI_API_KEY")
 
-# Инициализируем клиент. Если ai_key равен None, библиотека попробует 
-# взять его напрямую из переменной окружения GEMINI_API_KEY.
 try:
     if ai_key:
         client = genai.Client(api_key=ai_key)
     else:
-        # Попытка инициализации по умолчанию (будет искать системную переменную GEMINI_API_KEY)
         client = genai.Client()
 except Exception as init_err:
     print(f"CRITICAL WARNING: Failed to initialize Gemini Client: {init_err}")
@@ -32,7 +26,6 @@ def generate_individual_response(user_message: str, data: Optional[Dict[str, Any
     Generates tailored, concise agricultural advice.
     Includes fallback models and retry mechanisms to handle 503/429 API Overload errors.
     """
-    # Если клиент не инициализировался из-за отсутствия API ключа
     if not client:
         return (
             "WindGuard AI engine configuration error: No valid API key was found on the server. "
@@ -46,25 +39,23 @@ def generate_individual_response(user_message: str, data: Optional[Dict[str, Any
             "on the map first and run the analysis so you can provide personalized recommendations."
         )
     else:
-        # Extract and compute stats safely
         risk_percentage = round(data.get("risk_score", 0) * 100, 1)
         total_cells = data.get("total_cells", 0)
         hotspots = data.get("hotspots_count", 0)
-        
+
         worst_pts = data.get("worst_cells", [])
         pts_list = []
         for pt in worst_pts[:3]:
             lat = pt.get("lat")
             lon = pt.get("lon")
             r_val = pt.get("risk") or pt.get("avg_risk") or 0
-            
-            # Безопасное форматирование координат на случай, если они пришли некорректными (например, None)
+
             if lat is not None and lon is not None:
                 try:
                     pts_list.append(f"[Lat: {float(lat):.4f}, Lon: {float(lon):.4f}] ({round(r_val * 100)}%)")
                 except (ValueError, TypeError):
                     pts_list.append(f"[Lat: {lat}, Lon: {lon}] ({round(r_val * 100)}%)")
-        
+
         pts_str = ", ".join(pts_list) if pts_list else "no critical coordinates detected"
 
         system_instruction = f"""
@@ -87,9 +78,8 @@ STRICT CONCISENESS & LENGTH RULES:
 - Provide the response in ENGLISH using clean markdown.
 """
 
-    # Список стабильных моделей для фолбека (сначала пробуем быструю 2.5, затем стабильную 1.5)
-    models_to_try = ['gemini-2.5-flash', 'gemini-1.5-flash']
-    
+    models_to_try = ['gemini-2.0-flash', 'gemini-1.5-flash-latest', 'gemini-2.0-flash-lite']
+
     for model_name in models_to_try:
         for attempt in range(2):
             try:
@@ -99,22 +89,20 @@ STRICT CONCISENESS & LENGTH RULES:
                     contents=user_message,
                     config=types.GenerateContentConfig(
                         system_instruction=system_instruction,
-                        temperature=0.2, # Низкая температура гарантирует четкие, строгие факты
+                        temperature=0.2,
                     ),
                 )
                 print(f"Successfully generated response using {model_name}!")
                 return response.text
             except APIError as e:
-                # Перехватываем ошибки перегрузки серверов Google (503 / 429)
                 print(f"Google API Error ({e.code}) on {model_name}: {e.message}")
                 if attempt == 0:
-                    time.sleep(1)  # Делаем паузу в 1 секунду перед повторной попыткой
+                    time.sleep(1)
                     continue
             except Exception as e:
                 print(f"Unexpected error with {model_name}: {e}")
-                break  # Ошибка критическая — выходим из цикла попыток и переключаемся на резервную модель
-                
-    # Запасной хардкод-ответ на случай полной недоступности облака Google
+                break
+
     return (
         "The AI Engine is currently experiencing extremely heavy traffic. "
         "Here is a quick tip for your region: Keep your crop residues on the soil surface "
