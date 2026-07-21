@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api } from "../services/api";
+import { api } from "../services/api"; // Импортируем наш новый единый объект api
 
 export function useAssistant(context) {
   const [answer, setAnswer] = useState("Draw an area and generate an analysis. Then, you can ask WindGuard AI questions about the soil conditions of this territory.");

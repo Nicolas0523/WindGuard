@@ -9,6 +9,10 @@ const apiClient = axios.create({
   },
 });
 
+/**
+ * Helper to format Leaflet coordinates [[lat, lng], ...] 
+ * into a valid GeoJSON Polygon [[[lng, lat], ...]] with a closed ring.
+ */
 const formatToGeoJSON = (latLngs) => {
   if (!latLngs || latLngs.length === 0) return null;
 
@@ -23,7 +27,7 @@ const formatToGeoJSON = (latLngs) => {
   return {
     geometry: {
       type: "Polygon",
-      coordinates: [coordinates],
+      coordinates: [coordinates], // Triple nested array
     },
   };
 };
@@ -48,6 +52,7 @@ const pollTaskStatus = async (taskId) => {
 };
 
 export const api = {
+  // 1. Standard Historical Analysis (GEE)
   analyze: async (polygon, startDate, endDate) => {
     const geoJson = formatToGeoJSON(polygon);
     const payload = {
@@ -64,7 +69,7 @@ export const api = {
     const geoJson = formatToGeoJSON(polygon);
     const payload = {
       ...geoJson,
-      start_date: "",
+      start_date: "", // Schema requirement; backend will resolve actual dates
       end_date: "",
     };
     
@@ -76,7 +81,7 @@ export const api = {
     const geoJson = formatToGeoJSON(polygon);
     const payload = {
       ...geoJson,
-      start_date: startDate,
+      start_date: startDate, // Used on backend to parse the active month
       end_date: "",
     };
     
@@ -89,7 +94,7 @@ export const api = {
 
   askAssistant: async (question, analysisData = null) => {
     const payload = {
-      message: question,
+      message: question, // Backend: ChatRequest.message
       analysis_data: analysisData
         ? {
             risk_score: analysisData.risk_score,
@@ -100,10 +105,10 @@ export const api = {
               .slice(0, 5),
             hotspots_count: analysisData.hotspots?.length || 0,
           }
-        : null,
+        : null, // Backend: ChatRequest.analysis_data
     };
 
     const response = await apiClient.post("/api/chat", payload);
-    return response.data;
+    return response.data; // Returns {"response": "AI Markdown text response"}
   },
 };
