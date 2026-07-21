@@ -54,7 +54,7 @@ async def set_bot_webhook():
     await bot.set_webhook(url=f"{render_url}/telegram/webhook")
 
 
-#historical analysis
+# historical analysis
 @app.post("/analyze")
 async def analyze(data: AnalysisRequest, background_tasks: BackgroundTasks):
     job_id = str(uuid.uuid4())
@@ -98,7 +98,7 @@ def _analyze_sync(data: AnalysisRequest):
     }
 
 
-#10 day forecast
+# 10 day forecast
 @app.post("/analyze/short")
 async def forecast_short(data: AnalysisRequest, background_tasks: BackgroundTasks):
     job_id = str(uuid.uuid4())
@@ -152,7 +152,7 @@ def short_forecast_sync(data: AnalysisRequest):
     }
 
 
-#2040-2050 prediction
+# 2040-2050 prediction
 @app.post("/analyze/climate")
 async def forecast_climate(data: AnalysisRequest, background_tasks: BackgroundTasks):
     job_id = str(uuid.uuid4())
@@ -183,7 +183,7 @@ def _climate_forecast_sync(data: AnalysisRequest):
     grid_climate = prediction_future_grid(polygon, month=month, resolution_km=RESOLUTION_KM)
 
     if not grid_climate:
-        return {"error": "Не удалось сгенерировать климатический прогноз для данного региона."}
+        return {"error": "Failed to generate climate forecast for this region."}
 
     future_risk = sum(p["risk"] for p in grid_climate) / len(grid_climate)
     hotspots = calculate_hotspots(grid_climate, risk_threshold=0.7, min_size=3)
@@ -211,6 +211,9 @@ def _climate_forecast_sync(data: AnalysisRequest):
 
 @app.get("/analyze/status/{job_id}")
 async def get_status(job_id: str):
+    if not job_id or job_id == "undefined":
+        raise HTTPException(status_code=400, detail="Invalid job_id provided")
+
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")

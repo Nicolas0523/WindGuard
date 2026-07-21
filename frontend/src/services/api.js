@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const API_BASE_URL = "https://windguard-1.onrender.com/";
+const API_BASE_URL = "https://windguard-1.onrender.com";
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -9,10 +9,6 @@ const apiClient = axios.create({
   },
 });
 
-/**
- * Helper to format Leaflet coordinates [[lat, lng], ...] 
- * into a valid GeoJSON Polygon [[[lng, lat], ...]] with a closed ring.
- */
 const formatToGeoJSON = (latLngs) => {
   if (!latLngs || latLngs.length === 0) return null;
 
@@ -27,20 +23,28 @@ const formatToGeoJSON = (latLngs) => {
   return {
     geometry: {
       type: "Polygon",
-      coordinates: [coordinates], // Triple nested array
+      coordinates: [coordinates], 
     },
   };
 };
 
-const pollTaskStatus = async (taskId) => {
-  const pollInterval = 3000; 
+const getTodayFormatted = () => new Date().toISOString().split("T")[0];
 
-  while (true) {
-    const response = await apiClient.get(`/analyze/status/${taskId}`);
+export const pollTaskStatus = async (jobId) => {
+  if (!jobId || jobId === "undefined") {
+    throw new Error("Invalid Job ID for polling");
+  }
+
+  const pollInterval = 2000;
+  const timeout = 120000; 
+  const start = Date.now();
+
+  while (Date.now() - start < timeout) {
+    const response = await apiClient.get(`/analyze/status/${jobId}`);
     const task = response.data;
 
-    if (task.status === "completed") {
-      return task.result;
+    if (task.status === "done") {
+      return task; 
     }
 
     if (task.status === "error") {
@@ -49,52 +53,59 @@ const pollTaskStatus = async (taskId) => {
 
     await new Promise((resolve) => setTimeout(resolve, pollInterval));
   }
+
+  throw new Error("Analysis timed out. Please try again.");
 };
 
 export const api = {
-  // 1. Standard Historical Analysis (GEE)
   analyze: async (polygon, startDate, endDate) => {
     const geoJson = formatToGeoJSON(polygon);
     const payload = {
       ...geoJson,
-      start_date: startDate,
-      end_date: endDate,
+      start_date: startDate || getTodayFormatted(),
+      end_date: endDate || getTodayFormatted(),
     };
     
     const response = await apiClient.post("/analyze", payload);
-    return await pollTaskStatus(response.data.task_id);
+    return await pollTaskStatus(response.data.job_id);
   },
 
-  forecastShort: async (polygon) => {
+  forecastShort: async (polygon, startDate, endDate) => {
     const geoJson = formatToGeoJSON(polygon);
+    const today = getTodayFormatted();
+    
     const payload = {
       ...geoJson,
-      start_date: "", // Schema requirement; backend will resolve actual dates
-      end_date: "",
+      start_date: startDate || today, 
+      end_date: endDate || today,
     };
     
     const response = await apiClient.post("/analyze/short", payload);
-    return await pollTaskStatus(response.data.task_id);
+    return await pollTaskStatus(response.data.job_id);
   },
 
-  analyzeClimate: async (polygon, startDate) => {
+  analyzeClimate: async (polygon, startDate, endDate) => {
     const geoJson = formatToGeoJSON(polygon);
+    const today = getTodayFormatted();
+
     const payload = {
       ...geoJson,
-      start_date: startDate, // Used on backend to parse the active month
-      end_date: "",
+      start_date: startDate || today, 
+      end_date: endDate || today,
     };
     
     const response = await apiClient.post("/analyze/climate", payload);
-    if (response.data.status === "completed") {
-      return response.data.result;
-    }
-    return await pollTaskStatus(response.data.task_id);
+    return await pollTaskStatus(response.data.job_id);
+  },
+
+  getStatus: async (jobId) => {
+    const response = await apiClient.get(`/analyze/status/${jobId}`);
+    return response.data;
   },
 
   askAssistant: async (question, analysisData = null) => {
     const payload = {
-      message: question, // Backend: ChatRequest.message
+      message: question,
       analysis_data: analysisData
         ? {
             risk_score: analysisData.risk_score,
@@ -105,10 +116,10 @@ export const api = {
               .slice(0, 5),
             hotspots_count: analysisData.hotspots?.length || 0,
           }
-        : null, // Backend: ChatRequest.analysis_data
+        : null, 
     };
 
     const response = await apiClient.post("/api/chat", payload);
-    return response.data; // Returns {"response": "AI Markdown text response"}
+    return response.data; 
   },
 };
