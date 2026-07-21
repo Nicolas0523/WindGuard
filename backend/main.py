@@ -1,8 +1,12 @@
 import os
 import ee
+import asyncio
+import uuid 
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import BackgroundTasks
+from fastapi.concurrency import run_in_threadpool
 from datetime import datetime, timedelta
 
 from aiogram.types import Update
@@ -34,6 +38,7 @@ app.add_middleware(
 )
 
 climate_cache = {}
+jobs = {}
 RESOLUTION_KM = 10
 
 @app.post("/telegram/webhook")
@@ -49,127 +54,168 @@ async def set_bot_webhook():
     await bot.set_webhook(url=f"{render_url}/telegram/webhook")
 
 
+#historical analysis
 @app.post("/analyze")
-def analyze(data: AnalysisRequest):
+async def analyze(data: AnalysisRequest, background_tasks: BackgroundTasks):
+    job_id = str(uuid.uuid4())
+    jobs[job_id] = {"status": "processing"}
+    background_tasks.add_task(_run_analyze, job_id, data)
+    return {"job_id": job_id, "status": "processing"}
+
+async def _run_analyze(job_id: str, data: AnalysisRequest):
     try:
-        polygon = ee.Geometry.Polygon(data.geometry.coordinates)
+        result = await run_in_threadpool(_analyze_sync, data)
+        jobs[job_id] = {"status": "done", **result}
+    except Exception as e:
+        import traceback; print(traceback.format_exc())
+        jobs[job_id] = {"status": "error", "error": str(e)}
+
+def _analyze_sync(data: AnalysisRequest):
+    polygon = ee.Geometry.Polygon(data.geometry.coordinates)
         
-        actual_start, actual_end, is_forecast = resolve_dates(
-            data.start_date, data.end_date
-        )
-        grid_cells = prediction_grid(polygon, actual_start, actual_end, resolution_km=RESOLUTION_KM)
+    actual_start, actual_end, is_forecast = resolve_dates(data.start_date, data.end_date)
 
-        if not grid_cells:
-            return {"error": f"No data for {actual_start} → {actual_end}"}
+    grid_cells = prediction_grid(polygon, actual_start, actual_end, resolution_km=RESOLUTION_KM)
 
-        avg_risk = sum(p["risk"] for p in grid_cells) / len(grid_cells)
-        hotspots = calculate_hotspots(grid_cells, risk_threshold=0.7, min_size=3)
+    if not grid_cells:
+        return {"error": f"No data for {actual_start} → {actual_end}"}
 
-        return {
-            "polygon":    data.geometry.coordinates,
-            "grid":       grid_cells,  
+    avg_risk = sum(p["risk"] for p in grid_cells) / len(grid_cells)
+    hotspots = calculate_hotspots(grid_cells, risk_threshold=0.7, min_size=3)
+
+    return {
+        "polygon":    data.geometry.coordinates,
+        "grid":       grid_cells,  
+        "risk_score": round(avg_risk, 4),
+        "hotspots":   hotspots,  
+        "feature_importances": get_feature_importance(),
+        "context": {
             "risk_score": round(avg_risk, 4),
-            "hotspots":   hotspots,  
-            "feature_importances": get_feature_importance(),
-            "context": {
-                "risk_score": round(avg_risk, 4),
-                "start_date": actual_start,
-                "end_date":   actual_end,
-                "forecast":   is_forecast
-            }
+            "start_date": actual_start,
+            "end_date":   actual_end,
+            "forecast":   is_forecast
         }
-    except Exception as e:
-        print("\n!!! ПРОИЗОШЛА ОШИБКА В ANALYZE !!!")
-        import traceback; print(traceback.format_exc())
-        return {"error": str(e)}
+    }
 
+
+#10 day forecast
 @app.post("/analyze/short")
-def forecast_short(data: AnalysisRequest):
+async def forecast_short(data: AnalysisRequest, background_tasks: BackgroundTasks):
+    job_id = str(uuid.uuid4())
+    jobs[job_id] = {"status": "processing"}
+    background_tasks.add_task(_run_short_forecast, job_id, data)
+    return {"job_id": job_id, "status": "processing"}
+
+async def _run_short_forecast(job_id: str, data: AnalysisRequest):
     try:
-        polygon = ee.Geometry.Polygon(data.geometry.coordinates)
+        result = await run_in_threadpool(short_forecast_sync, data)
+        jobs[job_id] = {"status": "done", **result}
+    except Exception as e:
+        import traceback; print(traceback.format_exc())
+        jobs[job_id] = {"status": "error", "error": str(e)}
+
+def short_forecast_sync(data: AnalysisRequest):
+    polygon = ee.Geometry.Polygon(data.geometry.coordinates)
         
-        today        = datetime.now()
-        actual_start = today.replace(year=today.year - 1).strftime("%Y-%m-%d")
-        actual_end   = (today.replace(year=today.year - 1) + timedelta(days=30)).strftime("%Y-%m-%d")
+    today        = datetime.now()
+    actual_start = today.replace(year=today.year - 1).strftime("%Y-%m-%d")
+    actual_end   = (today.replace(year=today.year - 1) + timedelta(days=30)).strftime("%Y-%m-%d")
 
-        forecast_from = today.strftime("%Y-%m-%d")
-        forecast_to   = (today + timedelta(days=10)).strftime("%Y-%m-%d")
+    forecast_from = today.strftime("%Y-%m-%d")
+    forecast_to   = (today + timedelta(days=10)).strftime("%Y-%m-%d")
 
-        grid_cells = prediction_grid(polygon, actual_start, actual_end, resolution_km=RESOLUTION_KM)
+    grid_cells = prediction_grid(polygon, actual_start, actual_end, resolution_km=RESOLUTION_KM)
 
-        if not grid_cells:
-            return {"error": f"No data for {actual_start} → {actual_end}"}
+    if not grid_cells:
+        return {"error": f"No data for {actual_start} → {actual_end}"}
 
-        avg_risk = sum(p["risk"] for p in grid_cells) / len(grid_cells)
-        hotspots = calculate_hotspots(grid_cells, risk_threshold=0.7, min_size=3)
+    avg_risk = sum(p["risk"] for p in grid_cells) / len(grid_cells)
+    hotspots = calculate_hotspots(grid_cells, risk_threshold=0.7, min_size=3)
 
-        return {
-            "polygon":       data.geometry.coordinates,
-            "grid":          grid_cells, 
+    return {
+        "polygon":       data.geometry.coordinates,
+        "grid":          grid_cells, 
+        "risk_score":    round(avg_risk, 4),
+        "hotspots":      hotspots,
+        "forecast_type": "10-day",
+        "is_forecast":   True,
+        "note":          "Forecast based on same period last year",
+        "period":        f"{forecast_from} to {forecast_to}",
+        "feature_importances": get_feature_importance(),
+        "context": {
             "risk_score":    round(avg_risk, 4),
-            "hotspots":      hotspots,
-            "forecast_type": "10-day",
-            "is_forecast":   True,
-            "note":          "Forecast based on same period last year",
-            "period":        f"{forecast_from} to {forecast_to}",
-            "feature_importances": get_feature_importance(),
-            "context": {
-                "risk_score":    round(avg_risk, 4),
-                "start_date":    actual_start,
-                "end_date":      actual_end,
-                "forecast_from": forecast_from,
-                "forecast_to":   forecast_to
-            }
+            "start_date":    actual_start,
+            "end_date":      actual_end,
+            "forecast_from": forecast_from,
+            "forecast_to":   forecast_to
         }
-    except Exception as e:
-        import traceback; print(traceback.format_exc())
-        return {"error": str(e)}
+    }
 
+
+#2040-2050 prediction
 @app.post("/analyze/climate")
-def analyze_climate(data: AnalysisRequest):
+async def forecast_climate(data: AnalysisRequest, background_tasks: BackgroundTasks):
+    job_id = str(uuid.uuid4())
+    jobs[job_id] = {"status": "processing"}
+    background_tasks.add_task(_run_climate_forecast, job_id, data)
+    return {"job_id": job_id, "status": "processing"}
+
+async def _run_climate_forecast(job_id: str, data: AnalysisRequest):
     try:
-        polygon   = ee.Geometry.Polygon(data.geometry.coordinates)
-        cache_key = f"future_{str(data.geometry.coordinates)}_{data.start_date}"
-
-        if cache_key in climate_cache:
-            return climate_cache[cache_key]
-
-        try:
-            month = int(data.start_date.split("-")[1])
-        except Exception:
-            month = 6  
-
-        grid_climate = prediction_future_grid(polygon, month=month, resolution_km=RESOLUTION_KM)
-
-        if not grid_climate:
-            return {"error": "Не удалось сгенерировать климатический прогноз для данного региона."}
-
-        future_risk = sum(p["risk"] for p in grid_climate) / len(grid_climate)
-        hotspots = calculate_hotspots(grid_climate, risk_threshold=0.7, min_size=3)
-
-        result = {
-            "polygon":     data.geometry.coordinates,
-            "grid":        grid_climate,
-            "risk_score":  round(future_risk, 4),
-            "hotspots":    hotspots,
-            "scenario":    "SSP5-8.5",
-            "period":      "2040-2050",
-            "is_forecast": True,
-            "feature_importances": get_feature_importance(),
-            "context": {
-                "risk_score": round(future_risk, 4),
-                "scenario":   "SSP5-8.5 (worst case)",
-                "period":     "2050",
-                "hotspots_found": len(hotspots)
-            }
-        }
-        
-        climate_cache[cache_key] = result
-        return result
-
+        result = await run_in_threadpool(_climate_forecast_sync, data)
+        jobs[job_id] = {"status": "done", **result}
     except Exception as e:
         import traceback; print(traceback.format_exc())
-        return {"error": str(e)}
+        jobs[job_id] = {"status": "error", "error": str(e)}
+    
+def _climate_forecast_sync(data: AnalysisRequest):
+    polygon   = ee.Geometry.Polygon(data.geometry.coordinates)
+    cache_key = f"future_{str(data.geometry.coordinates)}_{data.start_date}"
+
+    if cache_key in climate_cache:
+        return climate_cache[cache_key]
+
+    try:
+        month = int(data.start_date.split("-")[1])
+    except Exception:
+        month = 6  
+
+    grid_climate = prediction_future_grid(polygon, month=month, resolution_km=RESOLUTION_KM)
+
+    if not grid_climate:
+        return {"error": "Не удалось сгенерировать климатический прогноз для данного региона."}
+
+    future_risk = sum(p["risk"] for p in grid_climate) / len(grid_climate)
+    hotspots = calculate_hotspots(grid_climate, risk_threshold=0.7, min_size=3)
+
+    result = {
+        "polygon":     data.geometry.coordinates,
+        "grid":        grid_climate,
+        "risk_score":  round(future_risk, 4),
+        "hotspots":    hotspots,
+        "scenario":    "SSP5-8.5",
+        "period":      "2040-2050",
+        "is_forecast": True,
+        "feature_importances": get_feature_importance(),
+        "context": {
+            "risk_score": round(future_risk, 4),
+            "scenario":   "SSP5-8.5 (worst case)",
+            "period":     "2050",
+            "hotspots_found": len(hotspots)
+        }
+    }
+        
+    climate_cache[cache_key] = result
+    return result
+
+
+@app.get("/analyze/status/{job_id}")
+async def get_status(job_id: str):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
 
 @app.post("/api/chat")
 async def chat_endpoint(req: ChatRequest):

@@ -1,12 +1,12 @@
 from extract_features import extract_features, extract_features_grid, extract_future_features_grid
-from data_loader import load_raw_data
+from data_loader import load_raw_data, load_raw_data_multi_year
 from config import ml_model
 from datetime import datetime
 
 
 def prediction_val(polygon, start_date, end_date):
 
-    raw_data = load_raw_data(
+    raw_data = load_raw_data_multi_year(
         polygon,
         start_date,
         end_date
@@ -29,7 +29,7 @@ def prediction_val(polygon, start_date, end_date):
 
 
 def prediction_grid(polygon, start_date, end_date, resolution_km=10):
-    raw_data = load_raw_data(polygon, start_date, end_date)
+    raw_data = load_raw_data_multi_year(polygon, start_date, end_date)
     month = datetime.strptime(start_date, "%Y-%m-%d").month
 
     scaled, coords_meta = extract_features_grid(raw_data, polygon, month, resolution_km)
@@ -53,7 +53,7 @@ def prediction_grid(polygon, start_date, end_date, resolution_km=10):
 
 
 def prediction_future_grid(polygon, month, resolution_km=10):
-    raw_data = load_raw_data(polygon, "2025-06-01", "2025-08-31") 
+    raw_data = load_raw_data_multi_year(polygon, "2025-06-01", "2025-08-31") 
 
     scaled, coords_meta = extract_future_features_grid(
         raw_data, polygon, month, resolution_km=resolution_km

@@ -4,7 +4,6 @@ from datetime import datetime, timedelta
 
 def load_raw_data(polygon, start_date, end_date):
 
-    # Проверяем MODIS — если пусто, берём тот же период год назад
     def get_ndvi(start, end):
         collection = ee.ImageCollection("MODIS/061/MOD13A2") \
             .filterBounds(polygon) \
@@ -13,7 +12,6 @@ def load_raw_data(polygon, start_date, end_date):
         size = collection.size().getInfo()
         
         if size == 0:
-            # Откатываемся на год назад
             start_dt = datetime.strptime(start, "%Y-%m-%d")
             end_dt   = datetime.strptime(end,   "%Y-%m-%d")
             start    = start_dt.replace(year=start_dt.year - 1).strftime("%Y-%m-%d")
@@ -32,7 +30,6 @@ def load_raw_data(polygon, start_date, end_date):
 
     ndvi = get_ndvi(start_date, end_date)
 
-    # ERA5 — тоже проверяем
     def get_era5(start, end):
         collection = ee.ImageCollection("ECMWF/ERA5_LAND/HOURLY") \
             .filterBounds(polygon) \
@@ -72,7 +69,7 @@ def load_raw_data(polygon, start_date, end_date):
         .mean().rename('rain').clip(polygon)
 
     tempC = era5_hourly.select('temperature_2m') \
-        .mean().subtract(273.15).rename('temp').clip(polygon)
+        .mean().subtract(273.15).rename('tempC').clip(polygon)
 
     soil_moisture = era5_hourly.select('volumetric_soil_water_layer_1') \
         .mean().rename('soil_moisture').clip(polygon)
@@ -100,4 +97,57 @@ def load_raw_data(polygon, start_date, end_date):
         "slope":         slope,
         "soil_type":     soil_type,
         "biome":         biome,
+    }
+
+
+def load_raw_data_multi_year(polygon, start_date, end_date):
+    start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+    end_dt   = datetime.strptime(end_date,   "%Y-%m-%d")
+    
+    if (end_dt - start_dt).days <= 365:
+        return load_raw_data(polygon, start_date, end_date)
+    
+    yearly_results = []
+    
+    for year in range(start_dt.year, end_dt.year + 1):
+
+        start = f"{year}-01-01"
+        end   = f"{year}-12-31"
+        
+        yearly_raw_data = load_raw_data(polygon, start, end)
+        yearly_results.append(yearly_raw_data)
+    
+    #avg data
+    ndvi_collection = ee.ImageCollection([r["ndvi"] for r in yearly_results])
+    avg_ndvi = ndvi_collection.mean()
+
+    wind_mean_collection = ee.ImageCollection([r['wind_mean'] for r in yearly_results])
+    avg_wind_mean = wind_mean_collection.mean()
+
+    wind_max_collection = ee.ImageCollection([r['wind_max'] for r in yearly_results])
+    avg_wind_max = wind_max_collection.mean()
+
+    rain_collection = ee.ImageCollection([r["rain"] for r in yearly_results])
+    avg_rain = rain_collection.mean()
+
+    tempC_collection = ee.ImageCollection([r["tempC"] for r in yearly_results])
+    avg_tempC = tempC_collection.mean()
+
+    soil_moisture_collection = ee.ImageCollection([r["soil_moisture"] for r in yearly_results])
+    avg_soil_moisture = soil_moisture_collection.mean()
+
+    evaporation_collection = ee.ImageCollection([r["evaporation"] for r in yearly_results])
+    avg_evaporation = evaporation_collection.mean()
+
+    return {
+        "ndvi":          avg_ndvi,
+        "wind_mean":     avg_wind_mean,
+        "wind_max":      avg_wind_max,
+        "rain":          avg_rain,
+        "tempC":         avg_tempC,
+        "soil_moisture": avg_soil_moisture,
+        "evaporation":   avg_evaporation,
+        "slope":         yearly_results[0]["slope"],      
+        "soil_type":     yearly_results[0]["soil_type"], 
+        "biome":         yearly_results[0]["biome"],      
     }
