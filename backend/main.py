@@ -15,7 +15,7 @@ from bot.bot_instance import bot, dp
 from schemas import AnalysisRequest, ChatRequest
 from assistant import generate_individual_response
 from predictor import prediction_grid, prediction_future_grid, get_feature_importance
-from grid import calculate_hotspots  
+from grid import calculate_hotspots 
 from gee_service import resolve_dates, gee_retry
 
 try:
@@ -39,7 +39,8 @@ app.add_middleware(
 
 climate_cache = {}
 jobs = {}
-RESOLUTION_KM = 10
+
+GEE_TIMEOUT_SECONDS = 80  
 
 @app.post("/telegram/webhook")
 async def telegram_webhook(request: Request):
@@ -54,7 +55,22 @@ async def set_bot_webhook():
     await bot.set_webhook(url=f"{render_url}/telegram/webhook")
 
 
-# historical analysis
+def get_adaptive_resolution(polygon: ee.Geometry) -> int:
+    try:
+        # Площадь в кв. км
+        area_sq_km = polygon.area().getInfo() / 1e6
+        if area_sq_km > 100000:
+            return 40  
+        elif area_sq_km > 30000:
+            return 25  
+        elif area_sq_km > 5000:
+            return 15  
+        return 10      
+    except Exception:
+        return 15
+
+
+# --- HISTORICAL ANALYSIS ---
 @app.post("/analyze")
 async def analyze(data: AnalysisRequest, background_tasks: BackgroundTasks):
     job_id = str(uuid.uuid4())
@@ -64,21 +80,30 @@ async def analyze(data: AnalysisRequest, background_tasks: BackgroundTasks):
 
 async def _run_analyze(job_id: str, data: AnalysisRequest):
     try:
-        result = await run_in_threadpool(_analyze_sync, data)
+        result = await asyncio.wait_for(
+            run_in_threadpool(_analyze_sync, data),
+            timeout=GEE_TIMEOUT_SECONDS
+        )
         jobs[job_id] = {"status": "done", **result}
+    except asyncio.TimeoutError:
+        print(f"[TIMEOUT] Job {job_id} exceeded GEE_TIMEOUT_SECONDS")
+        jobs[job_id] = {
+            "status": "error", 
+            "error": "Анализ превысил лимит времени (80 сек). Выберите меньшую область на карте."
+        }
     except Exception as e:
         import traceback; print(traceback.format_exc())
         jobs[job_id] = {"status": "error", "error": str(e)}
 
 def _analyze_sync(data: AnalysisRequest):
     polygon = ee.Geometry.Polygon(data.geometry.coordinates)
+    resolution = get_adaptive_resolution(polygon)
         
     actual_start, actual_end, is_forecast = resolve_dates(data.start_date, data.end_date)
-
-    grid_cells = prediction_grid(polygon, actual_start, actual_end, resolution_km=RESOLUTION_KM)
+    grid_cells = prediction_grid(polygon, actual_start, actual_end, resolution_km=resolution)
 
     if not grid_cells:
-        return {"error": f"No data for {actual_start} → {actual_end}"}
+        return {"error": f"Нет данных для периода {actual_start} → {actual_end}"}
 
     avg_risk = sum(p["risk"] for p in grid_cells) / len(grid_cells)
     hotspots = calculate_hotspots(grid_cells, risk_threshold=0.7, min_size=3)
@@ -98,7 +123,7 @@ def _analyze_sync(data: AnalysisRequest):
     }
 
 
-# 10 day forecast
+# --- 10-DAY FORECAST ---
 @app.post("/analyze/short")
 async def forecast_short(data: AnalysisRequest, background_tasks: BackgroundTasks):
     job_id = str(uuid.uuid4())
@@ -108,14 +133,24 @@ async def forecast_short(data: AnalysisRequest, background_tasks: BackgroundTask
 
 async def _run_short_forecast(job_id: str, data: AnalysisRequest):
     try:
-        result = await run_in_threadpool(short_forecast_sync, data)
+        result = await asyncio.wait_for(
+            run_in_threadpool(short_forecast_sync, data),
+            timeout=GEE_TIMEOUT_SECONDS
+        )
         jobs[job_id] = {"status": "done", **result}
+    except asyncio.TimeoutError:
+        print(f"[TIMEOUT] Job {job_id} exceeded GEE_TIMEOUT_SECONDS")
+        jobs[job_id] = {
+            "status": "error", 
+            "error": "Анализ превысил лимит времени (80 сек). Выберите меньшую область на карте."
+        }
     except Exception as e:
         import traceback; print(traceback.format_exc())
         jobs[job_id] = {"status": "error", "error": str(e)}
 
 def short_forecast_sync(data: AnalysisRequest):
     polygon = ee.Geometry.Polygon(data.geometry.coordinates)
+    resolution = get_adaptive_resolution(polygon)
         
     today        = datetime.now()
     actual_start = today.replace(year=today.year - 1).strftime("%Y-%m-%d")
@@ -124,10 +159,10 @@ def short_forecast_sync(data: AnalysisRequest):
     forecast_from = today.strftime("%Y-%m-%d")
     forecast_to   = (today + timedelta(days=10)).strftime("%Y-%m-%d")
 
-    grid_cells = prediction_grid(polygon, actual_start, actual_end, resolution_km=RESOLUTION_KM)
+    grid_cells = prediction_grid(polygon, actual_start, actual_end, resolution_km=resolution)
 
     if not grid_cells:
-        return {"error": f"No data for {actual_start} → {actual_end}"}
+        return {"error": f"Нет данных для периода {actual_start} → {actual_end}"}
 
     avg_risk = sum(p["risk"] for p in grid_cells) / len(grid_cells)
     hotspots = calculate_hotspots(grid_cells, risk_threshold=0.7, min_size=3)
@@ -152,7 +187,7 @@ def short_forecast_sync(data: AnalysisRequest):
     }
 
 
-# 2040-2050 prediction
+# --- 2040-2050 CLIMATE PREDICTION ---
 @app.post("/analyze/climate")
 async def forecast_climate(data: AnalysisRequest, background_tasks: BackgroundTasks):
     job_id = str(uuid.uuid4())
@@ -162,12 +197,21 @@ async def forecast_climate(data: AnalysisRequest, background_tasks: BackgroundTa
 
 async def _run_climate_forecast(job_id: str, data: AnalysisRequest):
     try:
-        result = await run_in_threadpool(_climate_forecast_sync, data)
+        result = await asyncio.wait_for(
+            run_in_threadpool(_climate_forecast_sync, data),
+            timeout=GEE_TIMEOUT_SECONDS
+        )
         jobs[job_id] = {"status": "done", **result}
+    except asyncio.TimeoutError:
+        print(f"[TIMEOUT] Job {job_id} exceeded GEE_TIMEOUT_SECONDS")
+        jobs[job_id] = {
+            "status": "error", 
+            "error": "Анализ превысил лимит времени (80 сек). Выберите меньшую область на карте."
+        }
     except Exception as e:
         import traceback; print(traceback.format_exc())
         jobs[job_id] = {"status": "error", "error": str(e)}
-    
+
 def _climate_forecast_sync(data: AnalysisRequest):
     polygon   = ee.Geometry.Polygon(data.geometry.coordinates)
     cache_key = f"future_{str(data.geometry.coordinates)}_{data.start_date}"
@@ -180,7 +224,8 @@ def _climate_forecast_sync(data: AnalysisRequest):
     except Exception:
         month = 6  
 
-    grid_climate = prediction_future_grid(polygon, month=month, resolution_km=RESOLUTION_KM)
+    resolution = get_adaptive_resolution(polygon)
+    grid_climate = prediction_future_grid(polygon, month=month, resolution_km=resolution)
 
     if not grid_climate:
         return {"error": "Failed to generate climate forecast for this region."}
