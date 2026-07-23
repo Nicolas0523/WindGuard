@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import os
 
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove, FSInputFile
@@ -14,6 +15,85 @@ from . import keyboard as kb
 
 user = Router()
 
+async def send_analysis(
+    message: Message,
+    region_name: str,
+    start_date: str,
+    end_date: str,
+    analyzer,
+    ai_prompt: str
+):
+    region_info = REGIONS.get(region_name)
+
+    if not region_info:
+        await message.answer(f"Region geometry not found: {region_name}")
+        return
+
+    await message.answer("Analyzing data... ⏳")
+
+    result = await analyzer(
+        polygon=region_info["polygon"],
+        start_date=start_date,
+        end_date=end_date
+    )
+
+    if not result:
+        await message.answer("Empty response from server.")
+        return
+
+
+    if result.get("error"):
+        await message.answer(result["error"])
+        return
+
+    risk_score = result.get("risk_score", 0)
+    hotspots = result.get("hotspots", [])
+
+    risk_percent = risk_score * 100
+
+    if risk_percent >= 60:
+        level = "High 🔴"
+    elif risk_percent >= 30:
+        level = "Medium 🟡"
+    else:
+        level = "Low 🟢"
+
+    text = (
+        "🌪 **WindGuard Analysis**\n\n"
+        f"📍 Region: {region_name}\n"
+        f"📊 Average risk: {risk_percent:.2f}%\n"
+        f"Risk level: {level}\n\n"
+    )
+
+    if hotspots:
+        text += f"⚠️ Hotspots: {len(hotspots)}\n\n"
+
+        for i, hotspot in enumerate(hotspots, 1):
+            text += (
+                f"{i}. Risk: {hotspot['avg_risk']:.2f}\n"
+                f"Cells: {len(hotspot['cells'])}\n\n"
+            )
+    else:
+        text += "✅ No hotspots found.\n"
+
+    await message.answer(text, parse_mode="Markdown")
+
+    ai_data = {
+        "risk_score": risk_score,
+        "hotspots_count": len(hotspots),
+        "feature_importances": result.get("feature_importances"),
+        "context": result.get("context")
+    }
+
+    recommendations = generate_individual_response(
+        user_message=ai_prompt,
+        data=ai_data
+    )
+
+    await message.answer(
+        f"💡 **AI Recommendations**\n\n{recommendations}",
+        parse_mode="Markdown"
+    )
 
 @user.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext) -> None:
@@ -110,69 +190,16 @@ async def process_historical_dates(message: Message, state: FSMContext) -> None:
         user_data = await state.get_data()
         region_name = user_data.get("region")
         
-        region_info = REGIONS.get(region_name)
-
-        if not region_info:
-            await message.answer(f"Region geometry not found for: {region_name}")
-            return
-
-        await message.answer("Analyzing data via WindGuard API... Please wait. ⏳")
-
-        result = analyze_region(
-            polygon=region_info["polygon"], 
-            start_date=start_date.strip(),
-            end_date=end_date.strip()
+        await send_analysis(
+            message,
+            region_name,
+            start_date,
+            end_date,
+            analyze_region,
+            "Provide agricultural recommendations based on the historical wind analysis."
         )
-        
-        if "error" in result:
-            await message.answer(f"API Error: {result['error']}")
-            return
 
-        risk_score = result.get('risk_score', 0)
-        response_text = f"🌪 **WindGuard Analysis**\n\n"
-        response_text += f"📍 Region: {region_name}\n" 
-        
-
-        risk_percent = risk_score * 100
-        if risk_score > 0.6:
-            response_text += f"📊 Average risk: {risk_percent:.2f}%\n\nRisk level: High 🔴\n\n"
-        elif risk_score > 0.3:
-            response_text += f"📊 Average risk: {risk_percent:.2f}%\n\nRisk level: Medium 🟡\n\n"
-        else:
-            response_text += f"📊 Average risk: {risk_percent:.2f}%\n\nRisk level: Low 🟢\n\n"
-
-        hotspots = result.get("hotspots", [])
-        if hotspots:
-            response_text += f"⚠️ **Hotspots found ({len(hotspots)}):**\n\n"
-            for i, hotspot in enumerate(hotspots, start=1):
-                response_text += (
-                    f"{i}. Risk Score: {hotspot['avg_risk']:.2f}\n"
-                    f"   Affected Cells: {len(hotspot['cells'])}\n\n"
-                )
-        else:
-            response_text += "✅ No critical hotspots found in this area.\n\n"
-
-        await message.answer(response_text)
-
-        await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
-        
-        ai_data = {
-            "risk_score": risk_score,
-            "total_cells": result.get("total_cells", 100), 
-            "hotspots_count": len(hotspots),
-            "worst_cells": result.get("worst_cells", [])
-        }
-        
-        ai_recommendations = generate_individual_response(
-            user_message="Provide recommendations based on this analysis.",
-            data=ai_data
-        )
-        
-        await message.answer(f"💡 **AI Agro-Consultant Recommendations:**\n\n{ai_recommendations}", parse_mode="Markdown")
-
-
-        await state.set_state(None) 
-
+        await state.clear()
     except Exception as e:
         await message.answer(f"Something went wrong: {str(e)}")
 
@@ -186,67 +213,20 @@ async def process_climate_prediction(message: Message, state: FSMContext) -> Non
         user_data = await state.get_data()
         region_name = user_data.get("region")
         
-        region_info = REGIONS.get(region_name)
-
-        if not region_info:
-            await message.answer(f"Region geometry not found for: {region_name}")
+        if "region" not in user_data:
+            await message.answer("Please choose a region first using 'Choose Region' button.")
             return
 
-        await message.answer("Analyzing data via WindGuard API... Please wait. ⏳")
-
-        result = analyze_climate(
-            polygon=region_info["polygon"], 
-            start_date=start_date.strip(),
-            end_date=end_date.strip()
+        await send_analysis(
+            message,
+            region_name,
+            start_date,
+            end_date,
+            analyze_climate,
+            "Provide climate adaptation recommendations for 2050."
         )
-        
-        if "error" in result:
-            await message.answer(f"API Error: {result['error']}")
-            return
 
-        risk_score = result.get('risk_score', 0)
-        response_text = f"🌪 **WindGuard Analysis**\n\n"
-        response_text += f"📍 Region: {region_name}\n" 
-        
-        risk_percent = risk_score * 100
-        if risk_score > 0.6:
-            response_text += f"📊 Average risk: {risk_percent:.2f}%\n\nRisk level: High 🔴\n\nScenario: Worst SSP-8.5 case\n\n"
-        elif risk_score > 0.3:
-            response_text += f"📊 Average risk: {risk_percent:.2f}%\n\nRisk level: Medium 🟡\n\nScenario: Average SSP-8.5 case\n\n"
-        else:
-            response_text += f"📊 Average risk: {risk_percent:.2f}%\n\nRisk level: Low 🟢\n\nScenario: Best SSP-8.5 case\n\n"
-
-        hotspots = result.get("hotspots", [])
-        if hotspots:
-            response_text += f"⚠️ **Hotspots found ({len(hotspots)}):**\n\n"
-            for i, hotspot in enumerate(hotspots, start=1):
-                response_text += (
-                    f"{i}. Risk Score: {hotspot['avg_risk']:.2f}\n"
-                    f"   Affected Cells: {len(hotspot['cells'])}\n\n"
-                )
-        else:
-            response_text += "✅ No critical hotspots found in this area.\n\n"
-
-        await message.answer(response_text)
-
-        await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
-        
-        ai_data = {
-            "risk_score": risk_score,
-            "total_cells": result.get("total_cells", 100),
-            "hotspots_count": len(hotspots),
-            "worst_cells": result.get("worst_cells", [])
-        }
-        
-        ai_recommendations = generate_individual_response(
-            user_message="Explain what these long-term climate predictions mean for my field and how to prepare.",
-            data=ai_data
-        )
-        
-        await message.answer(f"💡 **AI Climate Risk Mitigation advice:**\n\n{ai_recommendations}", parse_mode="Markdown")
-
-        await state.set_state(None) 
-
+        await state.clear()
     except Exception as e:
         await message.answer(f"Something went wrong: {str(e)}")
 
@@ -255,102 +235,62 @@ async def process_climate_prediction(message: Message, state: FSMContext) -> Non
 async def process_short_forecast(message: Message, state: FSMContext) -> None:
     try:
         today = datetime.now()
-        forecast_from = today.strftime("%Y-%m-%d")
-        forecast_to = (today + timedelta(days=10)).strftime("%Y-%m-%d")
+        start_date = today.strftime("%Y-%m-%d")
+        end_date = (today + timedelta(days=10)).strftime("%Y-%m-%d")
         
         user_data = await state.get_data()
+        
         region_name = user_data.get("region")
-        
-        region_info = REGIONS.get(region_name)
-
-        if not region_info:
-            await message.answer(f"Region geometry not found for: {region_name}")
+        if "region" not in user_data:
+            await message.answer("Please choose a region first using 'Choose Region' button.")
             return
 
-        await message.answer("Analyzing data via WindGuard API... Please wait. ⏳")
-
-        result = analyze_short(
-            polygon=region_info["polygon"], 
-            start_date=forecast_from.strip(),
-            end_date=forecast_to.strip()
+        await send_analysis(
+            message,
+            region_name,
+            start_date,
+            end_date,
+            analyze_short,
+            "Provide recommendations for the next 10 days."
         )
-        
-        if "error" in result:
-            await message.answer(f"API Error: {result['error']}")
-            return
 
-        risk_score = result.get('risk_score', 0)
-        response_text = f"🌪 **WindGuard Analysis**\n\n"
-        response_text += f"📍 Region: {region_name}\n" 
-        
-        risk_percent = risk_score * 100
-        if risk_score > 0.6:
-            response_text += f"📊 Average risk: {risk_percent:.2f}%\n\nRisk level: High 🔴\n\n"
-        elif risk_score > 0.3:
-            response_text += f"📊 Average risk: {risk_percent:.2f}%\n\nRisk level: Medium 🟡\n\n"
-        else:
-            response_text += f"📊 Average risk: {risk_percent:.2f}%\n\nRisk level: Low 🟢\n\n"
-
-        hotspots = result.get("hotspots", [])
-        if hotspots:
-            response_text += f"⚠️ **Hotspots found ({len(hotspots)}):**\n\n"
-            for i, hotspot in enumerate(hotspots, start=1):
-                response_text += (
-                    f"{i}. Risk Score: {hotspot['avg_risk']:.2f}\n"
-                    f"   Affected Cells: {len(hotspot['cells'])}\n\n"
-                )
-        else:
-            response_text += "✅ No critical hotspots found in this area.\n\n"
-
-        await message.answer(response_text)
-
-        await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
-        
-        ai_data = {
-            "risk_score": risk_score,
-            "total_cells": result.get("total_cells", 100),
-            "hotspots_count": len(hotspots),
-            "worst_cells": result.get("worst_cells", [])
-        }
-        
-        ai_recommendations = generate_individual_response(
-            user_message="What are the immediate actions for the next 10 days?",
-            data=ai_data
-        )
-        
-        await message.answer(f"💡 **AI Agro-Consultant Recommendations:**\n\n{ai_recommendations}", parse_mode="Markdown")
-
-
-        await state.set_state(None) 
-
+        await state.clear()
     except Exception as e:
         await message.answer(f"Something went wrong: {str(e)}")
 
 
 @user.message()
-async def chat_with_assistant(message: Message, state: FSMContext) -> None:
-    current_state = await state.get_state()
-    if current_state is not None:
+async def chat_with_assistant(message: Message, state: FSMContext):
+    if await state.get_state():
         return
 
-    await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
+    await message.bot.send_chat_action(
+        message.chat.id,
+        action="typing"
+    )
 
     try:
-        user_data = await state.get_data()
-        region_name = user_data.get("region", None)
-        
+        data = await state.get_data()
+
+        region = data.get("region")
+
         prompt = message.text
-        if region_name:
-            prompt = f"[User Region: {region_name}] {message.text}"
 
-        ai_response = generate_individual_response(user_message=prompt, data=None)
-        
-        await message.answer(ai_response, parse_mode="Markdown")
-        
-    except Exception as e:
-        print(f"Error in Gemini chat: {e}")
-        await message.answer("My system is slightly overloaded. Please rephrase your question or try again in a moment!")
+        if region:
+            prompt = f"[User Region: {region}] {prompt}"
 
+        answer = generate_individual_response(
+            user_message=prompt,
+            data=None
+        )
+
+        await message.answer(answer, parse_mode="Markdown")
+
+    except Exception:
+        await message.answer(
+            "My system is overloaded. Try again later."
+        )
+        
 @user.message(F.text == "Send document")
 async def send_document(message: Message, state: FSMContext) -> None:
     try:
@@ -362,6 +302,11 @@ async def send_document(message: Message, state: FSMContext) -> None:
             return
 
         pdf_path = f"reports/report_{region_name.replace(' ', '_')}.pdf" 
+        if not os.path.exists(pdf_path):
+            await message.answer(
+                "Sorry, the report hasn't been generated yet."
+            )
+            return
 
         await message.answer("Preparing your PDF report... ⏳")
         await message.bot.send_chat_action(chat_id=message.chat.id, action="upload_document")

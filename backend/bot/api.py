@@ -1,70 +1,128 @@
+import asyncio
 import time
-import requests
+import httpx
 
 BASE_URL = "https://windguard-1.onrender.com"
 
+client = httpx.AsyncClient(
+    timeout=httpx.Timeout(240),
+    limits=httpx.Limits(
+        max_connections=20,
+        max_keepalive_connections=10,
+    ),
+)
 
-def poll_result(job_id, timeout=120):
+
+async def poll_result(job_id: str, timeout: int = 120):
     start = time.time()
-    url = f"{BASE_URL}/analyze/status/{job_id}"
 
     while time.time() - start < timeout:
         try:
-            response = requests.get(url, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                status = data.get("status")
+            response = await client.get(
+                f"{BASE_URL}/analyze/status/{job_id}"
+            )
+        except httpx.HTTPError:
+            await asyncio.sleep(2)
+            continue
 
-                if status == "done":
-                    return data
+        if response.status_code == 404:
+            return {"error": "Job not found."}
 
-                if status in ["failed", "error"]:
-                    return {"error": "Job failed on server", "details": data}
-        except Exception:
-            pass
+        if response.status_code != 200:
+            await asyncio.sleep(2)
+            continue
 
-        time.sleep(3)
+        result = response.json()
+        status = result.get("status")
 
-    return {"error": "Timeout"}
+        if status == "done":
+            return result
+
+        if status == "error":
+            return {
+                "error": result.get("error", "Unknown server error")
+            }
+
+        await asyncio.sleep(3)
+
+    return {"error": "Analysis timeout."}
 
 
-def _send_analysis_request(endpoint: str, polygon: list, start_date: str, end_date: str):
+async def _request(
+    endpoint: str,
+    polygon,
+    start_date: str,
+    end_date: str,
+):
     payload = {
         "geometry": {
             "type": "Polygon",
-            "coordinates": polygon
+            "coordinates": polygon,
         },
         "start_date": start_date,
-        "end_date": end_date
+        "end_date": end_date,
     }
 
-    try:
-        response = requests.post(f"{BASE_URL}{endpoint}", json=payload, timeout=15)
-        
-        if response.status_code not in [200, 201, 202]:
-            return {"error": f"Server returned status {response.status_code}", "details": response.text}
+    for attempt in range(3):
+        try:
+            response = await client.post(
+                f"{BASE_URL}{endpoint}",
+                json=payload,
+            )
 
-        data = response.json()
-        job_id = data.get("job_id")  
+            response.raise_for_status()
 
-        if not job_id:
-            return {"error": "No job_id returned from server", "response": data}
+            data = response.json()
 
-        return poll_result(job_id)
+            job_id = data.get("job_id")
 
-    except KeyboardInterrupt:
-        return {"error": "Process cancelled by user"}
-    except Exception as e:
-        return {"error": f"Request failed: {str(e)}"}
+            if not job_id:
+                return {"error": "Server didn't return job_id."}
+
+            return await poll_result(job_id)
+
+        except httpx.HTTPError as e:
+            if attempt == 2:
+                if isinstance(e, httpx.HTTPStatusError):
+                    return {
+                        "error": f"HTTP {e.response.status_code}",
+                        "details": e.response.text,
+                    }
+
+                return {"error": str(e)}
+
+            await asyncio.sleep(2)
+
+        except Exception as e:
+            return {"error": str(e)}
 
 
-def analyze_region(polygon, start_date, end_date):
-    return _send_analysis_request("/analyze", polygon, start_date, end_date)
+async def analyze_region(polygon, start_date, end_date):
+    return await _request(
+        "/analyze",
+        polygon,
+        start_date,
+        end_date,
+    )
 
 
-def analyze_climate(polygon, start_date, end_date):
-    return _send_analysis_request("/analyze/climate", polygon, start_date, end_date)
+async def analyze_short(polygon, start_date, end_date):
+    return await _request(
+        "/analyze/short",
+        polygon,
+        start_date,
+        end_date,
+    )
 
 
-def analyze_short(polygon, start_date, end_date):
-    return _send_analysis_request("/analyze/short", polygon, start_date, end_date)
+async def analyze_climate(polygon, start_date, end_date):
+    return await _request(
+        "/analyze/climate",
+        polygon,
+        start_date,
+        end_date,
+    )
+
+
+async def close_client():
+    await client.aclose()
